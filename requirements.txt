@@ -1,0 +1,3 @@
+mcp[cli]>=1.0.0
+biopython>=1.83
+pytest>=9.0.0
