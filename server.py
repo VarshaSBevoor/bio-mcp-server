@@ -1,9 +1,10 @@
-"""Bioinformatics MCP server — exposes DNA/RNA analysis, BLAST, and sequence file parsing."""
+"""Bioinformatics MCP server — exposes DNA/RNA analysis, BLAST, sequence parsing, and scRNA-seq tools."""
 
 from mcp.server.fastmcp import FastMCP
 from tools.sequence import analyze_sequence
 from tools.parsers import parse_fasta, parse_fastq
 from tools.blast import run_blast
+from tools.scrna import validate_barcodes, compute_scrna_qc, analyze_umis
 
 mcp = FastMCP("bio-mcp-server")
 
@@ -72,6 +73,67 @@ def blast_sequence(
         max_hits: Number of top hits to return (1–20, default 5).
     """
     return run_blast(sequence, program=program, database=database, max_hits=max_hits)
+
+
+@mcp.tool()
+def validate_cell_barcodes(
+    barcodes: list,
+    chemistry: str = "10x_v3",
+    whitelist: str | None = None,
+) -> dict:
+    """
+    Validate cell barcodes from a single-cell sequencing experiment.
+
+    Checks barcode length against the expected value for the given chemistry,
+    flags barcodes containing N bases, and — when a whitelist is provided —
+    reports exact matches and barcodes correctable within Hamming distance 1
+    (matching Cell Ranger's correction strategy).
+
+    Args:
+        barcodes: List of barcode strings extracted from R1 reads.
+        chemistry: Library chemistry — 10x_v2, 10x_v3, 10x_v3.1, dropseq, indrop.
+        whitelist: Optional newline-separated string of known valid barcodes.
+    """
+    return validate_barcodes(barcodes, chemistry=chemistry, whitelist=whitelist)
+
+
+@mcp.tool()
+def scrna_qc_metrics(count_matrix_csv: str, mt_prefix: str = "MT-") -> dict:
+    """
+    Compute per-cell QC metrics from a raw count matrix.
+
+    Calculates the three core metrics used in scRNA-seq QC pipelines
+    (e.g. Scanpy's calculate_qc_metrics):
+    - total_counts: total UMI counts per cell
+    - n_genes_by_counts: genes detected per cell (count > 0)
+    - pct_counts_mt: fraction of counts from mitochondrial genes
+
+    High pct_counts_mt (>20%) flags dying cells. Outlier total_counts or
+    n_genes_by_counts flags empty droplets or doublets.
+
+    Args:
+        count_matrix_csv: Genes-x-cells or cells-x-genes CSV with row/column labels.
+        mt_prefix: Gene name prefix for mitochondrial genes (default: MT-).
+    """
+    return compute_scrna_qc(count_matrix_csv, mt_prefix=mt_prefix)
+
+
+@mcp.tool()
+def umi_analysis(umis: list, chemistry: str = "10x_v3") -> dict:
+    """
+    Analyze UMI sequences for quality, nucleotide bias, and collision risk.
+
+    UMIs allow PCR duplicates to be collapsed so each unique UMI+gene combination
+    represents one original molecule. This tool reports UMI length consistency,
+    per-position nucleotide frequencies (to detect synthesis bias), duplication rate,
+    and estimates collision probability via the birthday problem approximation.
+
+    Args:
+        umis: List of UMI strings (for 10x v3: bases 17-28 of the R1 read).
+        chemistry: Library chemistry — 10x_v2 (10 bp), 10x_v3/v3.1 (12 bp),
+                   dropseq (8 bp), indrop (6 bp).
+    """
+    return analyze_umis(umis, chemistry=chemistry)
 
 
 if __name__ == "__main__":
